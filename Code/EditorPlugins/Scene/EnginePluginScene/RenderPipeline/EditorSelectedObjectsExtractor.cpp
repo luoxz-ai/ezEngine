@@ -43,8 +43,8 @@ const ezDeque<ezGameObjectHandle>* ezEditorSelectedObjectsExtractor::GetSelectio
   return &m_pSceneContext->GetSelectionWithChildren();
 }
 
-void ezEditorSelectedObjectsExtractor::Extract(const ezView& view, const ezDynamicArray<const ezGameObject*>& visibleObjects,
-                                               ezExtractedRenderData& extractedRenderData)
+void ezEditorSelectedObjectsExtractor::Extract(const ezView& view,
+  const ezDynamicArray<const ezGameObject*>& visibleObjects, ezExtractedRenderData& extractedRenderData)
 {
   const bool bShowCameraOverlays = view.GetCameraUsageHint() == ezCameraUsageHint::EditorView;
 
@@ -76,7 +76,8 @@ void ezEditorSelectedObjectsExtractor::Extract(const ezView& view, const ezDynam
         const float fAspect = 9.0f / 16.0f;
 
         // TODO: use aspect ratio of camera render target, if available
-        ezDebugRenderer::Draw2DRectangle(view.GetHandle(), ezRectFloat(20, 20, 256, 256 * fAspect), 0, ezColor::White, m_hRenderTarget);
+        ezDebugRenderer::Draw2DRectangle(
+          view.GetHandle(), ezRectFloat(20, 20, 256, 256 * fAspect), 0, ezColor::White, m_hRenderTarget);
 
         // TODO: if the camera renders to a texture anyway, use its view + render target instead
 
@@ -125,7 +126,8 @@ void ezEditorSelectedObjectsExtractor::CreateRenderTargetView(const ezView& view
   m_hRenderTargetView = ezRenderWorld::CreateView(name, pRenderTargetView);
 
   // MainRenderPipeline.ezRenderPipelineAsset
-  auto hRenderPipeline = ezResourceManager::LoadResource<ezRenderPipelineResource>("{ c533e113-2a4c-4f42-a546-653c78f5e8a7 }");
+  auto hRenderPipeline =
+    ezResourceManager::LoadResource<ezRenderPipelineResource>("{ c533e113-2a4c-4f42-a546-653c78f5e8a7 }");
   pRenderTargetView->SetRenderPipelineResource(hRenderPipeline);
 
   // TODO: get rid of const cast ?
@@ -146,16 +148,24 @@ void ezEditorSelectedObjectsExtractor::CreateRenderTargetView(const ezView& view
 
 void ezEditorSelectedObjectsExtractor::UpdateRenderTargetCamera(const ezCameraComponent* pCamComp)
 {
-  if (pCamComp->GetCameraMode() == ezCameraMode::OrthoFixedHeight || pCamComp->GetCameraMode() == ezCameraMode::OrthoFixedWidth)
+  switch (pCamComp->GetCameraMode())
   {
-    m_RenderTargetCamera.SetCameraMode(pCamComp->GetCameraMode(), pCamComp->GetOrthoDimension(), pCamComp->GetNearPlane(),
-                                       pCamComp->GetFarPlane());
+    case ezCameraMode::OrthoFixedHeight:
+    case ezCameraMode::OrthoFixedWidth:
+      m_RenderTargetCamera.SetCameraMode(
+        pCamComp->GetCameraMode(), pCamComp->GetOrthoDimension(), pCamComp->GetNearPlane(), pCamComp->GetFarPlane());
+      break;
+    case ezCameraMode::PerspectiveFixedFovX:
+    case ezCameraMode::PerspectiveFixedFovY:
+      m_RenderTargetCamera.SetCameraMode(
+        pCamComp->GetCameraMode(), pCamComp->GetFieldOfView(), pCamComp->GetNearPlane(), pCamComp->GetFarPlane());
+      break;
+    case ezCameraMode::Stereo:
+      m_RenderTargetCamera.SetCameraMode(ezCameraMode::PerspectiveFixedFovY, 45,
+        pCamComp->GetNearPlane(), pCamComp->GetFarPlane());
+      break;
   }
-  else
-  {
-    m_RenderTargetCamera.SetCameraMode(pCamComp->GetCameraMode(), pCamComp->GetFieldOfView(), pCamComp->GetNearPlane(),
-                                       pCamComp->GetFarPlane());
-  }
+
 
   ezView* pRenderTargetView = nullptr;
   if (!ezRenderWorld::TryGetView(m_hRenderTargetView, pRenderTargetView))

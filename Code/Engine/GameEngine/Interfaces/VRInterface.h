@@ -1,7 +1,10 @@
 #pragma once
 
+#include <GameEngine/ActorSystem/Actor.h>
+#include <GameEngine/ActorSystem/ActorPluginWindow.h>
 #include <Core/ResourceManager/ResourceHandle.h>
 #include <Foundation/Reflection/Reflection.h>
+#include <GameEngine/GameApplication/WindowOutputTarget.h>
 #include <GameEngine/GameEngineDLL.h>
 #include <RendererFoundation/RendererFoundationDLL.h>
 
@@ -10,6 +13,9 @@ class ezViewHandle;
 class ezCamera;
 class ezGALTextureHandle;
 class ezWorld;
+class ezVRInterface;
+class ezView;
+
 
 struct ezHMDInfo
 {
@@ -17,7 +23,7 @@ struct ezHMDInfo
   ezString m_sDeviceDriver;
   ezMat4 m_mat4eyePosLeft;
   ezMat4 m_mat4eyePosRight;
-  ezVec2U32 m_vEyeRenderTargetSize;
+  ezSizeU32 m_vEyeRenderTargetSize;
 };
 
 
@@ -86,8 +92,6 @@ struct ezVRDeviceState
   ezMat4 m_mPose;
   ezVec3 m_vPosition;
   ezQuat m_qRotation;
-  ezVec3 m_vVelocity;
-  ezVec3 m_vAngularVelocity;
   Type m_Type = Type::Unknown;
   bool m_bPoseIsValid = false;
   bool m_bDeviceIsConnected = false;
@@ -105,6 +109,59 @@ struct ezVRDeviceEvent
   ezVRDeviceID uiDeviceID = 0;
 };
 
+class EZ_GAMEENGINE_DLL ezWindowVR : public ezWindowBase
+{
+public:
+  ezWindowVR(ezVRInterface* pVrInterface, ezUniquePtr<ezWindowBase> pCompanionWindow);
+  virtual ~ezWindowVR();
+
+  virtual ezSizeU32 GetClientAreaSize() const override;
+
+  virtual ezWindowHandle GetNativeWindowHandle() const override;
+
+  virtual bool IsFullscreenWindow(bool bOnlyProperFullscreenMode) const override;
+
+  virtual void ProcessWindowMessages() override;
+
+  ezVRInterface* m_pVrInterface = nullptr;
+  ezUniquePtr<ezWindowBase> m_pCompanionWindow;
+};
+
+class EZ_GAMEENGINE_DLL ezWindowOutputTargetVR : public ezWindowOutputTargetBase
+{
+public:
+  ezWindowOutputTargetVR(
+    ezVRInterface* pVrInterface, ezUniquePtr<ezWindowOutputTargetBase> pCompanionWindowOutputTarget);
+  ~ezWindowOutputTargetVR();
+
+  virtual void Present(bool bEnableVSync) override;
+  virtual ezResult CaptureImage(ezImage& out_Image) override;
+
+  ezVRInterface* m_pVrInterface = nullptr;
+  ezUniquePtr<ezWindowOutputTargetBase> m_pCompanionWindowOutputTarget;
+};
+
+class EZ_GAMEENGINE_DLL ezActorPluginWindowVR : public ezActorPluginWindow
+{
+  EZ_ADD_DYNAMIC_REFLECTION(ezActorPluginWindowVR, ezActorPluginWindow);
+
+public:
+  ezActorPluginWindowVR(ezVRInterface* pVrInterface, ezUniquePtr<ezWindowBase> companionWindow,
+    ezUniquePtr<ezWindowOutputTargetBase> companionWindowOutput);
+  ~ezActorPluginWindowVR();
+  void Initialize();
+
+  virtual ezWindowBase* GetWindow() const override;
+  virtual ezWindowOutputTargetBase* GetOutputTarget() const override;
+
+  ezVRInterface* m_pVrInterface = nullptr;
+  ezUniquePtr<ezWindowVR> m_pWindow;
+  ezUniquePtr<ezWindowOutputTargetVR> m_pWindowOutputTarget;
+
+protected:
+  virtual void Update() override;
+};
+
 class ezVRInterface
 {
 public:
@@ -118,7 +175,7 @@ public:
   /// \brief Initializes the VR system. This can be quite time consuming
   /// as it will generally start supporting applications needed to run
   /// and start up the HMD if it went to sleep.
-  virtual bool Initialize() = 0;
+  virtual ezResult Initialize() = 0;
   /// \brief Shuts down the VR system again.
   virtual void Deinitialize() = 0;
   /// \brief Returns whether the VR system is initialized.
@@ -146,14 +203,10 @@ public:
   /// \name View
   ///@{
 
-  /// \brief Creates a VR view using the given render pipeline and camera.
-  /// The camera is automatically updated with the HMD transforms.
-  virtual ezViewHandle CreateVRView(const ezRenderPipelineResourceHandle& hRenderPipeline, ezCamera* pCamera,
-    ezGALMSAASampleCount::Enum msaaCount = ezGALMSAASampleCount::None) = 0;
-  /// \brief Returns the VR view.
-  virtual ezViewHandle GetVRView() const = 0;
-  /// \brief Destroys the VR view.
-  virtual bool DestroyVRView() = 0;
+  virtual ezUniquePtr<ezActor> CreateActor(
+    ezView* pView, ezGALMSAASampleCount::Enum msaaCount = ezGALMSAASampleCount::None) = 0;
+  /// \brief Called when the actor created by 'CreateActor' is destroyed.
+  virtual void OnActorDestroyed() = 0;
 
   /// \brief Returns true if SetCompanionViewRenderTarget is supported.
   virtual bool SupportsCompanionView() = 0;
