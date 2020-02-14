@@ -28,7 +28,7 @@
 //============================================================================
 //                                   INCLUDES
 //============================================================================
-#include <DockWidgetTab.h>
+#include "DockWidgetTab.h"
 #include "DockAreaWidget.h"
 
 #include <QStackedLayout>
@@ -245,6 +245,7 @@ struct DockAreaWidgetPrivate
 	CDockAreaTitleBar*	TitleBar		= nullptr;
 	CDockManager*		DockManager		= nullptr;
 	bool UpdateTitleBarButtons = false;
+	DockWidgetAreas		AllowedAreas	= AllDockAreas;
 
 	/**
 	 * Private data constructor
@@ -337,6 +338,7 @@ void DockAreaWidgetPrivate::updateTitleBarButtonStates()
 		_this->features().testFlag(CDockWidget::DockWidgetClosable));
 	TitleBar->button(TitleBarButtonUndock)->setEnabled(
 		_this->features().testFlag(CDockWidget::DockWidgetFloatable));
+	TitleBar->updateDockWidgetActionsButtons();
 	UpdateTitleBarButtons = false;
 }
 
@@ -354,6 +356,10 @@ CDockAreaWidget::CDockAreaWidget(CDockManager* DockManager, CDockContainerWidget
 
 	d->createTitleBar();
 	d->ContentsLayout = new DockAreaLayout(d->Layout);
+	if (d->DockManager)
+	{
+		emit d->DockManager->dockAreaCreated(this);
+	}
 }
 
 //============================================================================
@@ -487,7 +493,16 @@ void CDockAreaWidget::hideAreaWithNoVisibleContent()
 void CDockAreaWidget::onTabCloseRequested(int Index)
 {
     ADS_PRINT("CDockAreaWidget::onTabCloseRequested " << Index);
-	dockWidget(Index)->toggleView(false);
+    auto* DockWidget = dockWidget(Index);
+    if (DockWidget->features().testFlag(CDockWidget::DockWidgetDeleteOnClose))
+    {
+    	//DockWidget->deleteDockWidget();
+    	DockWidget->closeDockWidgetInternal();
+    }
+    else
+    {
+    	DockWidget->toggleView(false);
+    }
 }
 
 
@@ -538,6 +553,13 @@ void CDockAreaWidget::setCurrentIndex(int index)
 		qWarning() << Q_FUNC_INFO << "Invalid index" << index;
 		return;
     }
+
+	auto cw = d->ContentsLayout->currentWidget();
+	auto nw = d->ContentsLayout->widget(index);
+	if (cw == nw && !nw->isHidden())
+	{
+		return;
+	}
 
     emit currentChanging(index);
     TabBar->setCurrentIndex(index);
@@ -682,6 +704,11 @@ void CDockAreaWidget::updateTitleBarVisibility()
 		return;
 	}
 
+    if (CDockManager::configFlags().testFlag(CDockManager::AlwaysShowTabs))
+    {
+        return;
+    }
+
 	if (d->TitleBar)
 	{
 		d->TitleBar->setVisible(!Container->isFloating() || !Container->hasTopLevelDockWidget());
@@ -745,15 +772,26 @@ CDockWidget* CDockAreaWidget::nextOpenDockWidget(CDockWidget* DockWidget) const
 
 
 //============================================================================
-CDockWidget::DockWidgetFeatures CDockAreaWidget::features() const
+CDockWidget::DockWidgetFeatures CDockAreaWidget::features(eBitwiseOperator Mode) const
 {
-	CDockWidget::DockWidgetFeatures Features(CDockWidget::AllDockWidgetFeatures);
-	for (const auto DockWidget : dockWidgets())
+	if (BitwiseAnd == Mode)
 	{
-		Features &= DockWidget->features();
+		CDockWidget::DockWidgetFeatures Features(CDockWidget::AllDockWidgetFeatures);
+		for (const auto DockWidget : dockWidgets())
+		{
+			Features &= DockWidget->features();
+		}
+		return Features;
 	}
-
-	return Features;
+	else
+	{
+		CDockWidget::DockWidgetFeatures Features(CDockWidget::NoDockWidgetFeatures);
+		for (const auto DockWidget : dockWidgets())
+		{
+			Features |= DockWidget->features();
+		}
+		return Features;
+	}
 }
 
 
@@ -776,6 +814,15 @@ void CDockAreaWidget::setVisible(bool Visible)
 	}
 }
 
+void CDockAreaWidget::setAllowedAreas(DockWidgetAreas areas)
+{
+	d->AllowedAreas = areas;
+}
+
+DockWidgetAreas CDockAreaWidget::allowedAreas() const
+{
+	return d->AllowedAreas;
+}
 
 //============================================================================
 QAbstractButton* CDockAreaWidget::titleBarButton(TitleBarButton which) const
@@ -787,9 +834,19 @@ QAbstractButton* CDockAreaWidget::titleBarButton(TitleBarButton which) const
 //============================================================================
 void CDockAreaWidget::closeArea()
 {
-	for (auto DockWidget : openedDockWidgets())
+	// If there is only one single dock widget and this widget has the
+	// DeleteOnClose feature, then we delete the dock widget now
+	auto OpenDockWidgets = openedDockWidgets();
+	if (OpenDockWidgets.count() == 1 && OpenDockWidgets[0]->features().testFlag(CDockWidget::DockWidgetDeleteOnClose))
 	{
-		DockWidget->toggleView(false);
+		OpenDockWidgets[0]->closeDockWidgetInternal();
+	}
+	else
+	{
+		for (auto DockWidget : openedDockWidgets())
+		{
+			DockWidget->toggleView(false);
+		}
 	}
 }
 
@@ -798,6 +855,13 @@ void CDockAreaWidget::closeArea()
 void CDockAreaWidget::closeOtherAreas()
 {
 	dockContainer()->closeOtherAreas(this);
+}
+
+
+//============================================================================
+CDockAreaTitleBar* CDockAreaWidget::titleBar() const
+{
+	return d->TitleBar;
 }
 } // namespace ads
 

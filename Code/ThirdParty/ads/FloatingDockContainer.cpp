@@ -28,6 +28,8 @@
 //============================================================================
 #include "FloatingDockContainer.h"
 
+#include <iostream>
+
 #include <QBoxLayout>
 #include <QApplication>
 #include <QMouseEvent>
@@ -205,7 +207,7 @@ void FloatingDockContainerPrivate::updateDropOverlays(const QPoint &GlobalPos)
 	{
 		DockAreaOverlay->enableDropPreview(true);
 		DockAreaOverlay->setAllowedAreas(
-		    (VisibleDockAreas == 1) ? NoDockWidgetArea : AllDockAreas);
+		    (VisibleDockAreas == 1) ? NoDockWidgetArea : DockArea->allowedAreas());
 		DockWidgetArea Area = DockAreaOverlay->showOverlay(DockArea);
 
 		// A CenterDockWidgetArea for the dockAreaOverlay() indicates that
@@ -260,11 +262,6 @@ CFloatingDockContainer::CFloatingDockContainer(CDockManager *DockManager) :
 #endif
 
 	DockManager->registerFloatingWidget(this);
-
-	// We install an event filter to detect mouse release events because we
-	// do not receive mouse release event if the floating widget is behind
-	// the drop overlay cross
-	qApp->installEventFilter(this);
 }
 
 //============================================================================
@@ -275,6 +272,11 @@ CFloatingDockContainer::CFloatingDockContainer(CDockAreaWidget *DockArea) :
 #ifdef Q_OS_LINUX
     d->TitleBar->enableCloseButton(isClosable());
 #endif
+    auto TopLevelDockWidget = topLevelDockWidget();
+    if (TopLevelDockWidget)
+    {
+    	TopLevelDockWidget->emitTopLevelChanged(true);
+    }
 }
 
 //============================================================================
@@ -285,6 +287,11 @@ CFloatingDockContainer::CFloatingDockContainer(CDockWidget *DockWidget) :
 #ifdef Q_OS_LINUX
     d->TitleBar->enableCloseButton(isClosable());
 #endif
+    auto TopLevelDockWidget = topLevelDockWidget();
+    if (TopLevelDockWidget)
+    {
+    	TopLevelDockWidget->emitTopLevelChanged(true);
+    }
 }
 
 //============================================================================
@@ -329,6 +336,13 @@ void CFloatingDockContainer::moveEvent(QMoveEvent *event)
 
 	case DraggingFloatingWidget:
 		d->updateDropOverlays(QCursor::pos());
+#ifdef Q_OS_MACOS
+		// In OSX when hiding the DockAreaOverlay the application would set
+		// the main window as the active window for some reason. This fixes
+		// that by resetting the active window to the floating widget after
+		// updating the overlays.
+		QApplication::setActiveWindow(this);
+#endif
 		break;
 	default:
 		break;
@@ -340,9 +354,19 @@ void CFloatingDockContainer::closeEvent(QCloseEvent *event)
 {
 	ADS_PRINT("CFloatingDockContainer closeEvent");
 	d->setState(DraggingInactive);
+	event->ignore();
 
 	if (isClosable())
 	{
+		auto TopLevelDockWidget = topLevelDockWidget();
+		if (TopLevelDockWidget && TopLevelDockWidget->features().testFlag(CDockWidget::DockWidgetDeleteOnClose))
+		{
+			if (!TopLevelDockWidget->closeDockWidgetInternal())
+			{
+				return;
+			}
+		}
+
 		// In Qt version after 5.9.2 there seems to be a bug that causes the
 		// QWidget::event() function to not receive any NonClientArea mouse
 		// events anymore after a close/show cycle. The bug is reported here:
@@ -352,20 +376,7 @@ void CFloatingDockContainer::closeEvent(QCloseEvent *event)
 		// Starting from Qt version 5.12.2 this seems to work again. But
 		// now the QEvent::NonClientAreaMouseButtonPress function returns always
 		// Qt::RightButton even if the left button was pressed
-#ifndef Q_OS_LINUX
-#if (QT_VERSION > QT_VERSION_CHECK(5, 9, 2) && QT_VERSION < QT_VERSION_CHECK(5, 12, 2))
-        event->ignore();
         this->hide();
-#else
-		Super::closeEvent(event);
-#endif
-#else // Q_OS_LINUX
-        Super::closeEvent(event);
-#endif
-	}
-	else
-	{
-		event->ignore();
 	}
 }
 
@@ -373,6 +384,11 @@ void CFloatingDockContainer::closeEvent(QCloseEvent *event)
 void CFloatingDockContainer::hideEvent(QHideEvent *event)
 {
 	Super::hideEvent(event);
+    if (event->spontaneous())
+    {
+        return;
+    }
+
     // Prevent toogleView() events during restore state
     if (d->DockManager->isRestoringState())
     {
@@ -471,20 +487,6 @@ bool CFloatingDockContainer::event(QEvent *e)
 	return QWidget::event(e);
 }
 
-//============================================================================
-bool CFloatingDockContainer::eventFilter(QObject *watched, QEvent *event)
-{
-	Q_UNUSED(watched);
-	if (event->type() == QEvent::MouseButtonRelease
-	    && d->isState(DraggingFloatingWidget))
-	{
-		ADS_PRINT("FloatingWidget::eventFilter QEvent::MouseButtonRelease");
-		finishDragging();
-		d->titleMouseReleaseEvent();
-	}
-
-	return false;
-}
 
 //============================================================================
 void CFloatingDockContainer::startFloating(const QPoint &DragStartMousePos,
@@ -497,17 +499,9 @@ void CFloatingDockContainer::startFloating(const QPoint &DragStartMousePos,
 	d->setState(DragState);
 	d->DragStartMousePosition = DragStartMousePos;
 #ifdef Q_OS_LINUX
-	// I have not found a way on Linux to display the floating widget behind the
-	// dock overlay. That means if the user drags this floating widget around,
-	// it is always painted in front of the dock overlay and dock overlay cross.
-	// and the user will not see the dock overlay. To work around this issue,
-	// the window opacity is set to 0.6 to make the dock overlay visible
-	// again. If someone has an idea, how to place the dragged floating widget
-	// behind the dock overlay, then a pull request would be welcome.
 	if (DraggingFloatingWidget == DragState)
 	{
-		setAttribute(Qt::WA_X11NetWmWindowTypeDock, true);
-		setWindowOpacity(0.6);
+        setAttribute(Qt::WA_X11NetWmWindowTypeDock, true);
 		d->MouseEventHandler = MouseEventHandler;
 		if (d->MouseEventHandler)
 		{
@@ -517,7 +511,6 @@ void CFloatingDockContainer::startFloating(const QPoint &DragStartMousePos,
 #endif
 	moveFloating();
 	show();
-
 }
 
 //============================================================================
@@ -583,7 +576,7 @@ void CFloatingDockContainer::onDockAreaCurrentChanged(int Index)
 }
 
 //============================================================================
-bool CFloatingDockContainer::restoreState(QXmlStreamReader &Stream,
+bool CFloatingDockContainer::restoreState(CDockingStateReader &Stream,
     bool Testing)
 {
 	if (!d->DockContainer->restoreState(Stream, Testing))
@@ -627,6 +620,7 @@ void CFloatingDockContainer::finishDragging()
        d->MouseEventHandler = nullptr;
    }
 #endif
+   d->titleMouseReleaseEvent();
 }
 
 } // namespace ads

@@ -52,7 +52,6 @@ struct DockOverlayPrivate
 	DockWidgetAreas AllowedAreas = InvalidDockWidgetArea;
 	CDockOverlayCross* Cross;
 	QPointer<QWidget> TargetWidget;
-	QRect TargetRect;
 	DockWidgetArea LastLocation = InvalidDockWidgetArea;
 	bool DropPreviewEnabled = true;
 	CDockOverlay::eMode Mode = CDockOverlay::ModeDockAreaOverlay;
@@ -333,7 +332,11 @@ CDockOverlay::CDockOverlay(QWidget* parent, eMode Mode) :
 {
 	d->Mode = Mode;
 	d->Cross = new CDockOverlayCross(this);
+#ifdef Q_OS_LINUX
+	setWindowFlags(Qt::Tool | Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint | Qt::X11BypassWindowManagerHint);
+#else
 	setWindowFlags(Qt::Tool | Qt::FramelessWindowHint);
+#endif
 	setWindowOpacity(1);
 	setWindowTitle("DockOverlay");
 	setAttribute(Qt::WA_NoSystemBackground);
@@ -383,7 +386,8 @@ DockWidgetArea CDockOverlay::dropAreaUnderCursor() const
 		return Result;
 	}
 
-	if (DockArea->titleBarGeometry().contains(DockArea->mapFromGlobal(QCursor::pos())))
+	if (DockArea->allowedAreas().testFlag(CenterDockWidgetArea)
+	 && DockArea->titleBarGeometry().contains(DockArea->mapFromGlobal(QCursor::pos())))
 	{
 		return CenterDockWidgetArea;
 	}
@@ -408,7 +412,6 @@ DockWidgetArea CDockOverlay::showOverlay(QWidget* target)
 	}
 
 	d->TargetWidget = target;
-	d->TargetRect = QRect();
 	d->LastLocation = InvalidDockWidgetArea;
 
 	// Move it over the target.
@@ -427,8 +430,8 @@ void CDockOverlay::hideOverlay()
 {
 	hide();
 	d->TargetWidget.clear();
-	d->TargetRect = QRect();
 	d->LastLocation = InvalidDockWidgetArea;
+	d->DropAreaRect = QRect();
 }
 
 
@@ -437,6 +440,13 @@ void CDockOverlay::enableDropPreview(bool Enable)
 {
 	d->DropPreviewEnabled = Enable;
 	update();
+}
+
+
+//============================================================================
+bool CDockOverlay::dropPreviewEnabled() const
+{
+	return d->DropPreviewEnabled;
 }
 
 
@@ -568,7 +578,11 @@ CDockOverlayCross::CDockOverlayCross(CDockOverlay* overlay) :
 	d(new DockOverlayCrossPrivate(this))
 {
 	d->DockOverlay = overlay;
+#ifdef Q_OS_LINUX
+	setWindowFlags(Qt::Tool | Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint | Qt::X11BypassWindowManagerHint);
+#else
 	setWindowFlags(Qt::Tool | Qt::FramelessWindowHint);
+#endif
 	setWindowTitle("DockOverlayCross");
 	setAttribute(Qt::WA_TranslucentBackground);
 

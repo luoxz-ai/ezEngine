@@ -30,10 +30,18 @@
 //============================================================================
 //                                   INCLUDES
 //============================================================================
-#include "DockContainerWidget.h"
-#include <QIcon>
-
-#include "ads_globals.h"
+#include <ads_globals.h>
+#include <DockContainerWidget.h>
+#include <DockWidget.h>
+#include <FloatingDockContainer.h>
+#include <qbytearray.h>
+#include <qflags.h>
+#include <qlist.h>
+#include <qmap.h>
+#include <qobjectdefs.h>
+#include <qstring.h>
+#include <qstringlist.h>
+#include <QtGui/qicon.h>
 
 class QSettings;
 class QMenu;
@@ -44,11 +52,13 @@ struct DockManagerPrivate;
 class CFloatingDockContainer;
 struct FloatingDockContainerPrivate;
 class CDockContainerWidget;
+class DockContainerWidgetPrivate;
 class CDockOverlay;
 class CDockAreaTabBar;
 class CDockWidgetTab;
 struct DockWidgetTabPrivate;
 struct DockAreaWidgetPrivate;
+class CIconProvider;
 
 /**
  * The central dock manager that maintains the complete docking system.
@@ -71,10 +81,14 @@ private:
 	friend class CFloatingDockContainer;
 	friend struct FloatingDockContainerPrivate;
 	friend class CDockContainerWidget;
+	friend class DockContainerWidgetPrivate;
 	friend class CDockAreaTabBar;
 	friend class CDockWidgetTab;
 	friend struct DockAreaWidgetPrivate;
 	friend struct DockWidgetTabPrivate;
+	friend class CFloatingDragPreview;
+	friend struct FloatingDragPreviewPrivate;
+	friend class CDockAreaTitleBar;
 
 protected:
 	/**
@@ -110,7 +124,14 @@ protected:
 	 */
 	CDockOverlay* dockAreaOverlay() const;
 
+	/**
+	 * Show the floating widgets that has been created floating
+	 */
+	virtual void showEvent(QShowEvent *event) override;
+
 public:
+	using Super = CDockContainerWidget;
+
 	enum eViewMenuInsertionOrder
 	{
 		MenuSortedByInsertion,
@@ -125,14 +146,41 @@ public:
 	{
 		ActiveTabHasCloseButton = 0x0001,    //!< If this flag is set, the active tab in a tab area has a close button
 		DockAreaHasCloseButton = 0x0002,     //!< If the flag is set each dock area has a close button
-		DockAreaCloseButtonClosesTab = 0x0004,//!< If the flag is set, the dock area close button closes the active tab, if not set, it closes the complete cock area
+		DockAreaCloseButtonClosesTab = 0x0004,//!< If the flag is set, the dock area close button closes the active tab, if not set, it closes the complete dock area
 		OpaqueSplitterResize = 0x0008, //!< See QSplitter::setOpaqueResize() documentation
 		XmlAutoFormattingEnabled = 0x0010,//!< If enabled, the XML writer automatically adds line-breaks and indentation to empty sections between elements (ignorable whitespace).
 		XmlCompressionEnabled = 0x0020,//!< If enabled, the XML output will be compressed and is not human readable anymore
 		TabCloseButtonIsToolButton = 0x0040,//! If enabled the tab close buttons will be QToolButtons instead of QPushButtons - disabled by default
 		AllTabsHaveCloseButton = 0x0080, //!< if this flag is set, then all tabs that are closable show a close button
 		RetainTabSizeWhenCloseButtonHidden = 0x0100, //!< if this flag is set, the space for the close button is reserved even if the close button is not visible
-		DefaultConfig = ActiveTabHasCloseButton | DockAreaHasCloseButton | OpaqueSplitterResize | XmlCompressionEnabled, ///< the default configuration
+		OpaqueUndocking = 0x0200,///< If enabled, the widgets are immediately undocked into floating widgets, if disabled, only a draw preview is undocked and the real undocking is deferred until the mouse is released
+		DragPreviewIsDynamic = 0x0400,///< If opaque undocking is disabled, this flag defines the behavior of the drag preview window, if this flag is enabled, the preview will be adjusted dynamically to the drop area
+		DragPreviewShowsContentPixmap = 0x0800,///< If opaque undocking is disabled, the created drag preview window shows a copy of the content of the dock widget / dock are that is dragged
+		DragPreviewHasWindowFrame = 0x1000,///< If opaque undocking is disabled, then this flag configures if the drag preview is frameless or looks like a real window
+		AlwaysShowTabs = 0x2000,///< If this option is enabled, the tab of a dock widget is always displayed - even if it is the only visible dock widget in a floating widget.
+		DockAreaHasUndockButton = 0x4000,     //!< If the flag is set each dock area has an undock button
+		DockAreaHasTabsMenuButton = 0x8000,     //!< If the flag is set each dock area has a tabs menu button
+		DockAreaHideDisabledButtons = 0x10000,    //!< If the flag is set disabled dock area buttons will not appear on the tollbar at all (enabling them will bring them back)
+		DockAreaDynamicTabsMenuButtonVisibility = 0x20000,     //!< If the flag is set dock area will disable a tabs menu button when there is only one tab in the area
+
+
+        DefaultDockAreaButtons = DockAreaHasCloseButton
+							   | DockAreaHasUndockButton
+		                       | DockAreaHasTabsMenuButton,///< default configuration of dock area title bar buttons
+
+		DefaultBaseConfig = DefaultDockAreaButtons
+		                  | ActiveTabHasCloseButton
+		                  | XmlCompressionEnabled,///< default base configuration settings
+
+        DefaultOpaqueConfig = DefaultBaseConfig
+		                    | OpaqueSplitterResize
+		                    | OpaqueUndocking, ///< the default configuration with opaque operations - this may cause issues if ActiveX or Qt 3D windows are involved
+
+		DefaultNonOpaqueConfig = DefaultBaseConfig
+		              | DragPreviewShowsContentPixmap, ///< the default configuration for non opaque operations
+
+		NonOpaqueWithWindowFrame = DefaultNonOpaqueConfig
+		              | DragPreviewHasWindowFrame ///< the default configuration for non opaque operations that show a real window with frame
 	};
 	Q_DECLARE_FLAGS(ConfigFlags, eConfigFlag)
 
@@ -167,6 +215,18 @@ public:
 	static void setConfigFlag(eConfigFlag Flag, bool On = true);
 
 	/**
+	 * Returns true if the given config flag is set
+	 */
+	static bool testConfigFlag(eConfigFlag Flag);
+
+	/**
+	 * Returns the global icon provider.
+	 * The icon provider enables the use of custom icons in case using
+	 * styleheets for icons is not an option.
+	 */
+	static CIconProvider& iconProvider();
+
+	/**
 	 * Adds dockwidget into the given area.
 	 * If DockAreaWidget is not null, then the area parameter indicates the area
 	 * into the DockAreaWidget. If DockAreaWidget is null, the Dockwidget will
@@ -197,6 +257,12 @@ public:
 	 */
 	CDockAreaWidget* addDockWidgetTabToArea(CDockWidget* Dockwidget,
 		CDockAreaWidget* DockAreaWidget);
+
+	/**
+	 * Adds the given DockWidget floating and returns the created
+	 * CFloatingDockContainer instance.
+	 */
+	CFloatingDockContainer* addDockWidgetFloating(CDockWidget* Dockwidget);
 
 	/**
 	 * Searches for a registered doc widget with the given ObjectName
@@ -231,7 +297,7 @@ public:
 	 * This function always return 0 because the main window is always behind
 	 * any floating widget
 	 */
-	virtual unsigned int zOrderIndex() const;
+	unsigned int zOrderIndex() const override;
 
 	/**
 	 * Saves the current state of the dockmanger and all its dock widgets
@@ -241,7 +307,7 @@ public:
 	 * The XmlMode XmlAutoFormattingDisabled is better if you would like to have
 	 * a more compact XML output - i.e. for storage in ini files.
 	 */
-	QByteArray saveState(int version = 0) const;
+	QByteArray saveState(int version = Version1) const;
 
 	/**
 	 * Restores the state of this dockmanagers dockwidgets.
@@ -250,7 +316,7 @@ public:
 	 * returns false; otherwise, the state is restored, and this function
 	 * returns true.
 	 */
-	bool restoreState(const QByteArray &state, int version = 0);
+	bool restoreState(const QByteArray &state, int version = Version1);
 
 	/**
 	 * Saves the current perspective to the internal list of perspectives.
@@ -383,9 +449,27 @@ signals:
      * perspective
      */
     void perspectiveOpened(const QString& PerspectiveName);
-    //EZ_MODIFICATION_START
-    void floatingWidgetOpened(CFloatingDockContainer* FloatingWidget);
-    //EZ_MODIFICATION_END
+
+    /**
+     * This signal is emitted, if a new DockArea has been created.
+     * An application can use this signal to set custom icons or custom
+     * tooltips for the DockArea buttons.
+     */
+    void dockAreaCreated(CDockAreaWidget* DockArea);
+
+    /**
+     * This signal is emitted just before the given dock widget is removed
+     * from the
+     */
+    void dockWidgetAboutToBeRemoved(CDockWidget* DockWidget);
+
+    /**
+     * This signal is emitted if a dock widget has been removed with the remove
+     * removeDockWidget() function.
+     * If this signal is emitted, the dock widget has been removed from the
+     * docking system but it is not deleted yet.
+     */
+    void dockWidgetRemoved(CDockWidget* DockWidget);
 }; // class DockManager
 } // namespace ads
 //-----------------------------------------------------------------------------

@@ -17,10 +17,13 @@ else()
 	target_compile_definitions(${PROJECT_NAME} PUBLIC ADS_STATIC)
 endif()
 
+target_include_directories(${PROJECT_NAME} PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+
 set (MOC_FILES
   ${CMAKE_CURRENT_SOURCE_DIR}/linux/FloatingWidgetTitleBar.h
   ${CMAKE_CURRENT_SOURCE_DIR}/DockAreaTabBar.h
   ${CMAKE_CURRENT_SOURCE_DIR}/DockAreaTitleBar.h
+  ${CMAKE_CURRENT_SOURCE_DIR}/DockAreaTitleBarInternal.h
   ${CMAKE_CURRENT_SOURCE_DIR}/DockAreaWidget.h
   ${CMAKE_CURRENT_SOURCE_DIR}/DockContainerWidget.h
   ${CMAKE_CURRENT_SOURCE_DIR}/DockManager.h
@@ -30,5 +33,6 @@ set (MOC_FILES
   ${CMAKE_CURRENT_SOURCE_DIR}/DockWidgetTab.h
   ${CMAKE_CURRENT_SOURCE_DIR}/ElidingLabel.h
   ${CMAKE_CURRENT_SOURCE_DIR}/FloatingDockContainer.h
+  ${CMAKE_CURRENT_SOURCE_DIR}/FloatingDragPreview.h
   )
 ez_qt_wrap_target_moc_files(${PROJECT_NAME} "${MOC_FILES}")
